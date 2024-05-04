@@ -139,7 +139,11 @@ class BayesianNetwork:
         """
                                           
         # TODO: implement this function
-        return 1.0
+
+        joint_prob = 1.0
+        for var_name, var_value in rv_values.items():
+            joint_prob *= self.nodes[var_name].get_probability(var_value, self.get_parent_values(var_name, rv_values))
+        return joint_prob
 
 
     def get_marginal_prob(self, rv_values: dict[str, str]) -> float:
@@ -163,7 +167,19 @@ class BayesianNetwork:
         # TODO: use get_marginal_prob and the def'n of conditional probability to complete this function
         # Do not modify the parameters' values (i.e., do not add or remove from the dictionaries)
 
-        return 1.0
+        result: dict[tuple[str, ...], float] = {}
+        query_vars = list(query.keys())
+
+        query_vals = self.enumerate_variables_tuples(query_vars)
+        for query_val_tuple in query_vals:
+            query_assignment = {query_vars[i]: query_val_tuple[i] for i in range(len(query_vars))}
+            combined_assignment = {**query_assignment, **evidence}
+            prob = self.get_marginal_prob(combined_assignment)
+            result[query_val_tuple] = prob
+
+        total_prob = sum(result.values())
+        result = {key: value / total_prob for key, value in result.items()}
+        return result[tuple(query.values())]
     
 
     def get_conditional_prob_distribution(self, query_vars: list[str], evidence: dict[str, str])\
@@ -201,7 +217,10 @@ class BayesianNetwork:
             # TODO: complete this loop, using get_marginal_prob and NOT get_conditional_prob
             # to set result[query_val_tuple] to be P(query_vars = query_val_tuple, evidence)
 
-            pass
+            query_assignment = {query_vars[i]: query_val_tuple[i] for i in range(len(query_vars))}
+            combined_assignment = {**query_assignment, **evidence}
+            prob = self.get_marginal_prob(combined_assignment)
+            result[query_val_tuple] = prob
 
 
         # Now the sum of all the values in result is P(evidence)
@@ -211,10 +230,9 @@ class BayesianNetwork:
         #  then divide each value by the sum)
         
         # TODO: normalize result so its values sum to 1.0
-        
+        total_prob = sum(result.values())
+        result = {key: value / total_prob for key, value in result.items()}
 
-
-        # return the final answer
         return result
 
 
@@ -260,7 +278,11 @@ class BayesianNetwork:
                 # TODO: Add to prob the following value:
                 # P(next_var=x | parents' values) * P(later vars in topo order| next_var=x, earlier vars in topo order)
                 # Hint: Set the appropriate evidence, then use recursion to compute the second term in the product
-                pass
+                # Set the value of next_var in evidence
+                evidence[next_var] = x
+                conditional_prob_next_var = self.__cond_prob_topo_order(query, evidence, next_var_index + 1)
+                prob_next_var_given_parents = node.get_probability(x, self.get_parent_values(node.name, evidence))
+                prob += prob_next_var_given_parents * conditional_prob_next_var
             
             del evidence[next_var]
 
@@ -280,14 +302,16 @@ class BayesianNetwork:
         # the Markov blanket of var_name: its parents, children, and childrens' parents.
         # Note that a node could be a parent of both var_name and one of var_name's children,
         # but it should only be included once.
-        markov_blanket_vars = self.nodes[var_name].parents.copy()
+        # markov_blanket_vars = self.nodes[var_name].parents.copy()
     
         # TODO: complete the function to compute and return the markov blanket variables' names
 
+        markov_blanket_vars = set(self.nodes[var_name].parents)
+        for node_name, node in self.nodes.items():
+            if var_name in node.parents:
+                markov_blanket_vars.update(node.parents)
 
-        return markov_blanket_vars
-
-
+        return list(markov_blanket_vars)
 
     def approx_conditional_prob_distribution(self, method: str, num_samples: int,
                                              query_vars: list[str], evidence: dict[str, str],
@@ -340,7 +364,10 @@ class BayesianNetwork:
             #
             # At the end of this block, sample_weight[v] should be
             # the total weight of the samples where the query variables had values v
-            pass
+            for _ in range(num_samples):
+                sample, weight = self.__gen_sample(evidence)
+                query_of_sample = tuple([sample[rv] for rv in query_vars])
+                sample_weight[query_of_sample] += weight
 
         elif method == 'gibbs':
             assert(gibbs is not None)
@@ -357,7 +384,10 @@ class BayesianNetwork:
             # generate num_samples samples.
             # At the end of this block, sample_weight[v] should be
             # the number of samples where the query variables had values v.
-            pass
+            for _ in range(num_samples):
+                gibbs.update_sample(sample, non_evidence_vars)
+                sample_of_gibbs = tuple([sample[rv] for rv in query_vars])
+                sample_weight[sample_of_gibbs] += 1.0
 
         else:
             raise ValueError(f"Invalid sampling method: {method}")
@@ -367,8 +397,8 @@ class BayesianNetwork:
         # dividing each value by the sum of the original values,
         # so the new sample_weight values sum to 1.0
        
-        
-
+        total_weight = sum(sample_weight.values())
+        sample_weight = {key: value / total_weight for key, value in sample_weight.items()} 
 
         # Return the final result
         return sample_weight
@@ -386,9 +416,28 @@ class BayesianNetwork:
         
         # TODO: complete this method according to the comment above
 
-       
-        return ({}, 1.0)
-    
+        sample = {}
+        weight = 1.0
+
+        if not use_likelihood_weighting:
+            while True:
+                for var_name in self.topo_order:
+                    if var_name in evidence:
+                        sample[var_name] = evidence[var_name]
+                    else:
+                        sample[var_name] = self.nodes[var_name].sample_value(self.get_parent_values(var_name, sample))
+                if all(sample[var] == evidence[var] for var in evidence):
+                    break
+        else:
+            for var_name in self.topo_order:
+                if var_name in evidence:
+                    sample[var_name] = evidence[var_name]
+                    weight *= self.nodes[var_name].get_probability(evidence[var_name], self.get_parent_values(var_name, sample))
+                else:
+                    var_value = self.nodes[var_name].sample_value(self.get_parent_values(var_name, sample))
+                    sample[var_name] = var_value
+                    weight *= self.nodes[var_name].get_probability(var_value, self.get_parent_values(var_name, sample))
+        return sample, weight
 
 
 class GibbsSampler:
@@ -423,6 +472,15 @@ class GibbsSampler:
         # TODO: complete this function, implementing Gibbs sampling
         # Use self.gibbs_tables. Do NOT call any of the exact probability methods from the BayesianNetwork.
 
-        pass
+        var_to_update = random.choice(non_evidence_vars)
+        markov_blanket = self.network.get_markov_blanket(var_to_update)
 
+        gibbs_table = self.gibbs_tables[var_to_update][tuple(sample[parent] for parent in markov_blanket)]
+        probabilities = {value: gibbs_table[(value,)] for value in self.network.nodes[var_to_update].values}
+        total_prob = sum(probabilities.values())
+        probabilities = {value: prob / total_prob for value, prob in probabilities.items()}
+        
+        new_value = random.choices(list(probabilities.keys()), list(probabilities.values()))[0]
+        sample[var_to_update] = new_value
 
+        return sample

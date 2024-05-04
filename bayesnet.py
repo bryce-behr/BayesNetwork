@@ -1,3 +1,9 @@
+"""
+Homework 9
+Bryce Behr and David Le Roux 
+"""
+
+
 import pprint
 import random
 from typing import Optional
@@ -479,7 +485,7 @@ class GibbsSampler:
         probabilities = {value: gibbs_table[(value,)] for value in self.network.nodes[var_to_update].values}
         total_prob = sum(probabilities.values())
         probabilities = {value: prob / total_prob for value, prob in probabilities.items()}
-        
+
         new_value = random.choices(list(probabilities.keys()), list(probabilities.values()))[0]
         sample[var_to_update] = new_value
 
